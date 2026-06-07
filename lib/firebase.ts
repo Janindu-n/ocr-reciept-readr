@@ -1,5 +1,6 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
 
 function getFirebaseApp(): FirebaseApp {
   const config = {
@@ -17,10 +18,18 @@ function getFirebaseApp(): FirebaseApp {
 }
 
 let authInstance: Auth | null = null;
+let firestoreInstance: Firestore | null = null;
 
 export function getAuthInstance(): Auth {
   if (!authInstance) {
     authInstance = getAuth(getFirebaseApp());
   }
   return authInstance;
+}
+
+export function getFirestoreInstance(): Firestore {
+  if (!firestoreInstance) {
+    firestoreInstance = getFirestore(getFirebaseApp());
+  }
+  return firestoreInstance;
 }
