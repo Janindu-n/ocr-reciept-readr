@@ -15,13 +15,11 @@ import {
   arrayUnion,
   query,
   where,
-  orderBy,
-  limit,
   getDocs,
   serverTimestamp,
   type Timestamp,
 } from "firebase/firestore";
-import { Camera, Loader2, LogOut, Check, ChevronDown } from "lucide-react";
+import { Camera, Loader2, LogOut, Check } from "lucide-react";
 
 type ReceiptData = {
   vendor_name: string;
@@ -38,7 +36,22 @@ type ReceiptEntry = ReceiptData & {
   createdAt: Timestamp;
 };
 
+type AccountSummary = {
+  name: string;
+  receiptCount: number;
+  totalAmount: number;
+};
+
+const USD_TO_LKR = 300;
+
 const MOCK_CLIENTS = ["Acme Corp", "Global Industries", "Internal Expenses"];
+
+function fmtAmount(usd: number) {
+  const lkr = usd * USD_TO_LKR;
+  const us = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(usd);
+  const lk = new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", maximumFractionDigits: 0 }).format(lkr);
+  return { usd: us, lkr: lk };
+}
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -50,76 +63,64 @@ export default function DashboardPage() {
   const [accountName, setAccountName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [entries, setEntries] = useState<ReceiptEntry[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-  const [accountList, setAccountList] = useState<string[]>([]);
+  const [allEntries, setAllEntries] = useState<ReceiptEntry[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
   const [selectedAccount, setSelectedAccount] = useState("");
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
 
-  const fetchAccounts = async () => {
+  const fetchAll = async () => {
     if (!user) return;
+    setLoadingData(true);
     try {
       const db = getFirestoreInstance();
       const q = query(
-        collection(db, "accounts"),
-        where("userId", "==", user.uid),
-        orderBy("updatedAt", "desc")
+        collection(db, "receipts"),
+        where("userId", "==", user.uid)
       );
       const snap = await getDocs(q);
-      const names = snap.docs.map((d) => d.data().accountName as string);
-      setAccountList(names);
-    } catch {
-      // not yet set up
-    }
-  };
-
-  const fetchEntries = async () => {
-    if (!user) return;
-    setLoadingHistory(true);
-    try {
-      const db = getFirestoreInstance();
-
-      let q;
-      if (selectedAccount) {
-        q = query(
-          collection(db, "receipts"),
-          where("userId", "==", user.uid),
-          where("accountName", "==", selectedAccount),
-          orderBy("createdAt", "desc"),
-          limit(20)
-        );
-      } else {
-        q = query(
-          collection(db, "receipts"),
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(20)
-        );
-      }
-
-      const snap = await getDocs(q);
-      const list: ReceiptEntry[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<ReceiptEntry, "id">),
-      }));
-      setEntries(list);
-    } catch {
-      // Firestore may not be enabled yet
+      const list: ReceiptEntry[] = snap.docs.map((d) => {
+        const data = d.data() as Omit<ReceiptEntry, "id">;
+        return { id: d.id, ...data };
+      });
+      list.sort((a, b) => {
+        const ta = a.createdAt as Timestamp | undefined;
+        const tb = b.createdAt as Timestamp | undefined;
+        if (ta && tb) return tb.seconds - ta.seconds || tb.nanoseconds - ta.nanoseconds;
+        return 0;
+      });
+      setAllEntries(list);
+    } catch (err) {
+      console.error("fetch receipts error:", err);
     } finally {
-      setLoadingHistory(false);
+      setLoadingData(false);
     }
   };
 
   useEffect(() => {
-    fetchAccounts();
+    fetchAll();
   }, [user]);
 
-  useEffect(() => {
-    fetchEntries();
-  }, [user, selectedAccount]);
+  const accounts: AccountSummary[] = (() => {
+    const map = new Map<string, { count: number; total: number }>();
+    for (const e of allEntries) {
+      const cur = map.get(e.accountName) || { count: 0, total: 0 };
+      cur.count++;
+      cur.total += Number(e.total_amount) || 0;
+      map.set(e.accountName, cur);
+    }
+    return Array.from(map.entries())
+      .map(([name, { count, total }]) => ({ name, receiptCount: count, totalAmount: total }))
+      .sort((a, b) => b.receiptCount - a.receiptCount || b.totalAmount - a.totalAmount);
+  })();
+
+  const accountNames = accounts.map((a) => a.name);
+
+  const filteredEntries = selectedAccount
+    ? allEntries.filter((e) => e.accountName === selectedAccount)
+    : allEntries;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -181,9 +182,9 @@ export default function DashboardPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
 
-      fetchAccounts();
-      fetchEntries();
-    } catch {
+      fetchAll();
+    } catch (err) {
+      console.error("save error:", err);
       setError("Failed to save receipt");
     } finally {
       setSaving(false);
@@ -192,15 +193,11 @@ export default function DashboardPage() {
 
   if (loading) return null;
 
-  const displayEntries = selectedAccount
-    ? entries
-    : entries;
-
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col px-4 py-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Receipts</h1>
+          <h1 className="text-xl font-semibold">SimpleBook OCR</h1>
           <p className="text-xs text-zinc-500">{user?.email}</p>
         </div>
         <button
@@ -249,8 +246,8 @@ export default function DashboardPage() {
             <Row label="Vendor" value={result.vendor_name} />
             <Row label="Date" value={result.date} />
             <Row label="Category" value={result.category} />
-            <Row label="Total" value={`$${Number(result.total_amount).toFixed(2)}`} />
-            <Row label="Tax" value={`$${Number(result.tax_amount).toFixed(2)}`} />
+            <AmountRow label="Total" usd={Number(result.total_amount)} />
+            <AmountRow label="Tax" usd={Number(result.tax_amount)} />
           </div>
 
           <input
@@ -284,36 +281,66 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-medium">Recent Activity</h2>
-        {accountList.length > 0 && (
-          <div className="relative">
-            <select
-              value={selectedAccount}
-              onChange={(e) => setSelectedAccount(e.target.value)}
-              className="appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-1.5 pr-8 text-sm outline-none focus:border-zinc-500"
-            >
-              <option value="">All Accounts</option>
-              {accountList.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={14}
-              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400"
-            />
+      {/* Accounts section */}
+      <div className="mb-6">
+        <h2 className="mb-3 text-base font-medium">Accounts</h2>
+        {loadingData ? (
+          <div className="flex items-center justify-center gap-2 py-4 text-sm text-zinc-500">
+            <Loader2 size={16} className="animate-spin" />
+            Loading accounts…
+          </div>
+        ) : accounts.length === 0 ? (
+          <p className="text-sm text-zinc-400">
+            No accounts yet. Scan and save a receipt to get started.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {accounts.map((a) => (
+              <div
+                key={a.name}
+                className="rounded-lg border border-zinc-200 px-4 py-3 text-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{a.name}</span>
+                  <span className="text-right">
+                    <span className="block font-semibold">{fmtAmount(a.totalAmount).usd}</span>
+                    <span className="block text-xs text-zinc-400">{fmtAmount(a.totalAmount).lkr}</span>
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-zinc-400">
+                  {a.receiptCount} receipt{a.receiptCount !== 1 ? "s" : ""}
+                </p>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {loadingHistory ? (
+      {/* Recent activity */}
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-base font-medium">Recent Activity</h2>
+        {accountNames.length > 0 && (
+          <select
+            value={selectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-500"
+          >
+            <option value="">All Receipts</option>
+            {accountNames.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {loadingData ? (
         <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">
           <Loader2 size={16} className="animate-spin" />
-          Loading history…
+          Loading receipts…
         </div>
-      ) : displayEntries.length === 0 ? (
+      ) : filteredEntries.length === 0 ? (
         <p className="text-sm text-zinc-400">
           {selectedAccount
             ? "No receipts for this account yet."
@@ -321,18 +348,16 @@ export default function DashboardPage() {
         </p>
       ) : (
         <div className="flex flex-col gap-2">
-          {displayEntries.map((e) => (
+          {filteredEntries.map((e) => (
             <div
               key={e.id}
               className="rounded-lg border border-zinc-200 px-4 py-3 text-sm"
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium">{e.accountName}</span>
-                <span className="text-zinc-400">
-                  {new Intl.NumberFormat("en-US", {
-                    style: "currency",
-                    currency: "USD",
-                  }).format(e.total_amount)}
+                <span className="text-right">
+                  <span className="block text-zinc-400">{fmtAmount(e.total_amount).usd}</span>
+                  <span className="block text-xs text-zinc-300">{fmtAmount(e.total_amount).lkr}</span>
                 </span>
               </div>
               <div className="mt-0.5 flex items-center justify-between text-xs text-zinc-400">
@@ -354,6 +379,19 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between border-b border-zinc-100 py-1 last:border-0">
       <span className="text-zinc-400">{label}</span>
       <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+function AmountRow({ label, usd }: { label: string; usd: number }) {
+  const f = fmtAmount(usd);
+  return (
+    <div className="flex justify-between border-b border-zinc-100 py-1 last:border-0">
+      <span className="text-zinc-400">{label}</span>
+      <span className="text-right">
+        <span className="block font-medium">{f.usd}</span>
+        <span className="block text-xs text-zinc-400">{f.lkr}</span>
+      </span>
     </div>
   );
 }
