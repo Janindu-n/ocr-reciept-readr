@@ -17,4 +17,4 @@ A mobile-first, serverless web application using Gemini 2.5 Flash Vision for dyn
 
 ## Demo Instructions
 
-Go to [ocr-reciept-readr.vercel.app](https://ocr-reciept-readr.vercel.app). Use credentials `simplebook01@demo.com` / `simplebooks-demo` to log in.
+Go to [ocr-reciept-readr.vercel.app](https://ocr-reciept-readr.vercel.app). Use credentials `simplebooks01@demo.com` / `simplebooks-demo` to log in.

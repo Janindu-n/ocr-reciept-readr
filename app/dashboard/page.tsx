@@ -10,6 +10,9 @@ import { getAuthInstance, getFirestoreInstance } from "@/lib/firebase";
 import {
   collection,
   addDoc,
+  doc,
+  setDoc,
+  arrayUnion,
   query,
   where,
   orderBy,
@@ -28,8 +31,9 @@ type ReceiptData = {
   category: string;
 };
 
-type LedgerEntry = ReceiptData & {
+type ReceiptEntry = ReceiptData & {
   id: string;
+  userId: string;
   accountName: string;
   createdAt: Timestamp;
 };
@@ -46,37 +50,38 @@ export default function DashboardPage() {
   const [accountName, setAccountName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [entries, setEntries] = useState<ReceiptEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
 
-  useEffect(() => {
+  const fetchEntries = async () => {
     if (!user) return;
-    const fetchEntries = async () => {
-      setLoadingHistory(true);
-      try {
-        const db = getFirestoreInstance();
-        const q = query(
-          collection(db, "receipts"),
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(20)
-        );
-        const snap = await getDocs(q);
-        const list: LedgerEntry[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<LedgerEntry, "id">),
-        }));
-        setEntries(list);
-      } catch {
-        // Firestore may not be enabled yet
-      } finally {
-        setLoadingHistory(false);
-      }
-    };
+    setLoadingHistory(true);
+    try {
+      const db = getFirestoreInstance();
+      const q = query(
+        collection(db, "receipts"),
+        where("userId", "==", user.uid),
+        orderBy("createdAt", "desc"),
+        limit(20)
+      );
+      const snap = await getDocs(q);
+      const list: ReceiptEntry[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ReceiptEntry, "id">),
+      }));
+      setEntries(list);
+    } catch {
+      // Firestore may not be enabled yet
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
     fetchEntries();
   }, [user]);
 
@@ -110,9 +115,11 @@ export default function DashboardPage() {
     setSaving(true);
     try {
       const db = getFirestoreInstance();
-      await addDoc(collection(db, "receipts"), {
+      const name = accountName.trim();
+
+      const receiptRef = await addDoc(collection(db, "receipts"), {
         userId: user.uid,
-        accountName: accountName.trim(),
+        accountName: name,
         vendor_name: result.vendor_name,
         date: result.date,
         total_amount: result.total_amount,
@@ -120,10 +127,25 @@ export default function DashboardPage() {
         category: result.category,
         createdAt: serverTimestamp(),
       });
+
+      const accountDocRef = doc(db, "accounts", name);
+      await setDoc(
+        accountDocRef,
+        {
+          userId: user.uid,
+          accountName: name,
+          receiptIds: arrayUnion(receiptRef.id),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
       setAccountName("");
       setResult(null);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+
+      fetchEntries();
     } catch {
       setError("Failed to save receipt");
     } finally {
@@ -175,7 +197,7 @@ export default function DashboardPage() {
       {saved && (
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">
           <Check size={16} />
-          Receipt saved to ledger
+          Receipt saved to account
         </div>
       )}
 
@@ -215,13 +237,13 @@ export default function DashboardPage() {
                 Saving…
               </>
             ) : (
-              "Save to Ledger"
+              "Save to Account"
             )}
           </button>
         </div>
       )}
 
-      <h2 className="mb-3 text-base font-medium">Recent Ledger Entries</h2>
+      <h2 className="mb-3 text-base font-medium">Recent Activity</h2>
 
       {loadingHistory ? (
         <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">

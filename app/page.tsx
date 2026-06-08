@@ -55,7 +55,7 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-xs text-zinc-400">
-          Demo login: simplebook01@demo.com / simplebooks-demo
+          Demo login: simplebooks01@demo.com / simplebooks-demo
         </p>
       </div>
     </div>
