@@ -21,7 +21,7 @@ import {
   serverTimestamp,
   type Timestamp,
 } from "firebase/firestore";
-import { Camera, Loader2, LogOut, Check } from "lucide-react";
+import { Camera, Loader2, LogOut, Check, ChevronDown } from "lucide-react";
 
 type ReceiptData = {
   vendor_name: string;
@@ -52,22 +52,54 @@ export default function DashboardPage() {
   const [saved, setSaved] = useState(false);
   const [entries, setEntries] = useState<ReceiptEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [accountList, setAccountList] = useState<string[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState("");
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
+
+  const fetchAccounts = async () => {
+    if (!user) return;
+    try {
+      const db = getFirestoreInstance();
+      const q = query(
+        collection(db, "accounts"),
+        where("userId", "==", user.uid),
+        orderBy("updatedAt", "desc")
+      );
+      const snap = await getDocs(q);
+      const names = snap.docs.map((d) => d.data().accountName as string);
+      setAccountList(names);
+    } catch {
+      // not yet set up
+    }
+  };
 
   const fetchEntries = async () => {
     if (!user) return;
     setLoadingHistory(true);
     try {
       const db = getFirestoreInstance();
-      const q = query(
-        collection(db, "receipts"),
-        where("userId", "==", user.uid),
-        orderBy("createdAt", "desc"),
-        limit(20)
-      );
+
+      let q;
+      if (selectedAccount) {
+        q = query(
+          collection(db, "receipts"),
+          where("userId", "==", user.uid),
+          where("accountName", "==", selectedAccount),
+          orderBy("createdAt", "desc"),
+          limit(20)
+        );
+      } else {
+        q = query(
+          collection(db, "receipts"),
+          where("userId", "==", user.uid),
+          orderBy("createdAt", "desc"),
+          limit(20)
+        );
+      }
+
       const snap = await getDocs(q);
       const list: ReceiptEntry[] = snap.docs.map((d) => ({
         id: d.id,
@@ -82,8 +114,12 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    fetchEntries();
+    fetchAccounts();
   }, [user]);
+
+  useEffect(() => {
+    fetchEntries();
+  }, [user, selectedAccount]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -145,6 +181,7 @@ export default function DashboardPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
 
+      fetchAccounts();
       fetchEntries();
     } catch {
       setError("Failed to save receipt");
@@ -154,6 +191,10 @@ export default function DashboardPage() {
   };
 
   if (loading) return null;
+
+  const displayEntries = selectedAccount
+    ? entries
+    : entries;
 
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col px-4 py-8">
@@ -243,18 +284,44 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <h2 className="mb-3 text-base font-medium">Recent Activity</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-base font-medium">Recent Activity</h2>
+        {accountList.length > 0 && (
+          <div className="relative">
+            <select
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+              className="appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-1.5 pr-8 text-sm outline-none focus:border-zinc-500"
+            >
+              <option value="">All Accounts</option>
+              {accountList.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400"
+            />
+          </div>
+        )}
+      </div>
 
       {loadingHistory ? (
         <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">
           <Loader2 size={16} className="animate-spin" />
           Loading history…
         </div>
-      ) : entries.length === 0 ? (
-        <p className="text-sm text-zinc-400">No entries yet. Scan your first receipt.</p>
+      ) : displayEntries.length === 0 ? (
+        <p className="text-sm text-zinc-400">
+          {selectedAccount
+            ? "No receipts for this account yet."
+            : "No entries yet. Scan your first receipt."}
+        </p>
       ) : (
         <div className="flex flex-col gap-2">
-          {entries.map((e) => (
+          {displayEntries.map((e) => (
             <div
               key={e.id}
               className="rounded-lg border border-zinc-200 px-4 py-3 text-sm"
